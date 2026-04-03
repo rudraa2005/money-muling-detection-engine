@@ -68,21 +68,18 @@ def format_output(
     all_rings: List[Dict[str, Any]],
     total_accounts: int,
     graph_data: Optional[Dict[str, Any]] = None,
+    min_suspicion_score: float = 5.0,
 ) -> Dict[str, Any]:
     """Build the final JSON-compatible output dict."""
     account_ring_map = _build_account_ring_map(all_rings)
+    min_suspicion_score = max(0.0, min(100.0, float(min_suspicion_score)))
 
     suspicious_accounts: List[Dict[str, Any]] = []
     for account_id, data in scores.items():
-        # Only include accounts with meaningful risk
-        # EXCEPTION: Ring members are always included for structural recall
-        if data["score"] <= 5.0 and account_id not in account_ring_map:
-            continue
-
         detected_patterns = list(dict.fromkeys(
             _map_pattern_name(p) for p in data["patterns"] if p not in _INTERNAL_PATTERNS
         ))
-        
+
         if not detected_patterns:
             continue
 
@@ -92,6 +89,8 @@ def format_output(
             display_score = round(float(data["score"]), 2)
 
         display_score = max(0.0, min(100.0, display_score))
+        if display_score < min_suspicion_score:
+            continue
 
         suspicious_accounts.append(
             {
@@ -127,6 +126,8 @@ def format_output(
             "pattern_type": pattern_type,
             "risk_score": round(float(ring["risk_score"]), 2),
         }
+        if "density_score" in ring:
+            ring_obj["density_score"] = round(float(ring["density_score"]), 2)
         fraud_rings.append(ring_obj)
 
     fraud_rings.sort(key=lambda x: x["risk_score"], reverse=True)

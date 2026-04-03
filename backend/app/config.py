@@ -123,7 +123,8 @@ SCORE_STRUCTURED_FRAGMENTATION = 10
 
 # --- ML Scoring ---
 ML_MODEL_PATH = "core/ml/models/risk_model_v1.pkl"
-# Tilt towards ML once available; rule engine remains strong fallback.
-ML_RULE_WEIGHT = 0.3
-ML_MODEL_WEIGHT = 0.7
+# Keep the learned model slightly dominant, but retain rule evidence as a
+# stabilizer so single-pattern noise does not overtake structural findings.
+ML_RULE_WEIGHT = 0.45
+ML_MODEL_WEIGHT = 0.55
 ML_ENABLED = True

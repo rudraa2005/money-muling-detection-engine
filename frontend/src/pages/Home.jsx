@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom'
 import Lenis from 'lenis'
 import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
-import RotatingEarth from '../components/RotatingGlobe'
 import { useAnalysis } from '../context/AnalysisContext'
 import { buildStrictExportPayload } from '../utils/jsonExport'
 
@@ -80,56 +79,65 @@ export default function Home() {
   }, [])
 
   return (
-    <div className="bg-background-dark text-white font-display min-h-screen flex flex-col">
+    <div className="bg-background-dark text-[color:var(--foreground)] font-display min-h-screen flex flex-col">
       <Navbar />
 
-      <main className="flex-1 mt-14">
+      <main className="flex-1 mt-20 md:mt-24">
         {/* ═══════ Hero ═══════ */}
-        <section ref={heroRef} className="scroll-reveal relative min-h-[88vh] flex items-center justify-center overflow-hidden">
-          {/* Hero Image Background - Increased Visibility */}
+        <section ref={heroRef} className="scroll-reveal relative flex min-h-[88vh] items-center justify-center overflow-hidden px-6 py-10">
           <div className="absolute inset-0 z-0">
-            <img src="/hero_network.jpg" alt="Financial Network" className="w-full h-full object-cover opacity-60 mix-blend-screen" />
-            <div className="absolute inset-0 bg-gradient-to-b from-background-dark via-transparent to-background-dark"></div>
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.6)_100%)]"></div>
+            <img src="/hero_network.jpg" alt="Financial Network" className="h-full w-full object-cover opacity-45" />
+            <div className="absolute inset-0 bg-gradient-to-b from-background-dark via-[rgba(12,13,16,0.45)] to-background-dark"></div>
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.48)_100%)]"></div>
           </div>
 
-          <div className="text-center relative z-10 max-w-4xl mx-auto px-6">
-            <div className="animate-fade-in-up inline-flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-1.5 rounded-full mb-8 backdrop-blur-md">
-              <span className="size-1.5 rounded-full bg-accent-red animate-pulse"></span>
-              <span className="text-[11px] font-medium text-white tracking-wide font-body">Live Monitoring Active</span>
-            </div>
+          <div className="relative z-10 mx-auto max-w-5xl text-center">
+            <div className="mx-auto max-w-4xl rounded-[32px] border border-white/10 bg-[rgba(14,15,17,0.42)] px-6 py-10 shadow-[0_30px_80px_rgba(0,0,0,0.28)] backdrop-blur-sm md:px-10 md:py-12">
+              <div className="animate-fade-in-up mb-8 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 backdrop-blur-md">
+                <span className="size-1.5 rounded-full bg-accent-blue animate-pulse"></span>
+                <span className="text-[11px] font-medium tracking-[0.22em] text-[#d9d4ca] font-body uppercase">Detection Console Ready</span>
+              </div>
 
-            <h1 className="animate-fade-in-up delay-200 text-7xl md:text-9xl font-display font-medium leading-[1.0] tracking-tight mb-8 text-white drop-shadow-2xl">
-              Financial<br />
-              Network Intelligence
-            </h1>
+              <h1 className="animate-fade-in-up delay-200 mb-8 text-6xl font-medium leading-[0.95] tracking-tight text-white md:text-[6.75rem]">
+                Financial Network
+                <br />
+                Intelligence
+              </h1>
 
-            <p className="animate-fade-in-up delay-400 text-xl text-neutral-300 max-w-xl mx-auto leading-relaxed mb-12 font-body drop-shadow-lg">
-              Detect complex fraud patterns across financial networks with real-time graph analysis and machine learning.
-            </p>
+              <p className="animate-fade-in-up delay-400 mx-auto mb-12 max-w-2xl text-lg leading-relaxed text-neutral-300 font-body md:text-xl">
+                Detect suspicious fund movement with graph-native analysis, behavioral scoring, and a calmer investigation surface built for long review sessions.
+              </p>
 
-            <div className="animate-fade-in-up delay-500 flex items-center justify-center gap-5">
-              <button
-                type="button"
-                onClick={() => document.getElementById('upload-csv')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                className="group relative px-8 py-3.5 bg-white text-black rounded-full font-semibold transition-transform hover:scale-105"
-              >
-                <span className="relative z-10">Get Started</span>
-              </button>
-              <Link to="/network-graph" className="px-8 py-3.5 rounded-full border border-white/20 hover:bg-white/10 transition-colors text-white font-medium backdrop-blur-sm">
-                View Live Graph
-              </Link>
+              <div className="animate-fade-in-up delay-500 flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-5">
+                <button
+                  type="button"
+                  onClick={() => document.getElementById('upload-csv')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  className="btn-primary rounded-full px-8 py-3.5 font-semibold"
+                >
+                  Get Started
+                </button>
+                <Link to="/network-graph" className="btn-outline rounded-full px-8 py-3.5 font-medium">
+                  View Live Graph
+                </Link>
+              </div>
+
+              <div className="animate-fade-in-up delay-600 mt-10 flex flex-wrap items-center justify-center gap-3">
+                {['20 detection patterns', 'Graph + ML scoring', 'Historical run archive'].map((label) => (
+                  <span key={label} className="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-[11px] uppercase tracking-[0.18em] text-[#bcb7ad] font-body">
+                    {label}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
         </section>
 
         {/* ═══════ Upload ═══════ */}
-        <section id="upload-csv" ref={uploadRef} className="scroll-reveal relative py-32 px-8">
-          {/* Edge gradients - Blue/Purple/Red */}
-          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-accent-blue via-accent-purple to-accent-red opacity-30"></div>
+        <section id="upload-csv" ref={uploadRef} className="scroll-reveal relative px-6 py-28">
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
 
-          <div className="absolute top-0 left-0 w-32 h-[500px] bg-accent-blue/5 blur-[100px]"></div>
-          <div className="absolute bottom-0 right-0 w-32 h-[500px] bg-accent-purple/5 blur-[100px]"></div>
+          <div className="absolute top-0 left-0 h-[420px] w-40 bg-accent-blue/8 blur-[110px]"></div>
+          <div className="absolute bottom-0 right-0 h-[420px] w-40 bg-accent-purple/8 blur-[110px]"></div>
 
           <div className="max-w-3xl mx-auto text-center relative z-10">
             <h2 className="text-5xl font-display text-white mb-4 tracking-tight">Upload & Analyze</h2>
@@ -140,11 +148,11 @@ export default function Home() {
               </p>
             )}
 
-            <div className="card-glass rounded-3xl p-12 bg-card-dark border border-white/10 backdrop-blur-md shadow-2xl relative overflow-hidden group">
-              <div className="absolute inset-0 bg-gradient-to-br from-accent-blue/5 via-transparent to-accent-purple/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
+            <div className="card-glass relative overflow-hidden rounded-[32px] border border-white/10 bg-card-dark/90 p-10 shadow-[0_32px_90px_rgba(0,0,0,0.24)] backdrop-blur-xl group md:p-12">
+              <div className="absolute inset-0 bg-gradient-to-br from-white/[0.05] via-transparent to-accent-blue/10 opacity-0 transition-opacity duration-700 group-hover:opacity-100"></div>
 
               <div className="flex flex-col items-center gap-6 relative z-10">
-                <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-500">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] transition-transform duration-500 group-hover:scale-105">
                   <span className="material-symbols-outlined text-white text-3xl">upload_file</span>
                 </div>
                 <div>
@@ -153,7 +161,7 @@ export default function Home() {
                     {selectedFileName || 'Drop your CSV file here or click to browse'}
                   </p>
                 </div>
-                <label className="inline-flex items-center gap-3 px-8 py-3 rounded-full text-sm font-semibold bg-white text-black hover:bg-neutral-200 transition-colors cursor-pointer">
+                <label className="btn-primary inline-flex cursor-pointer items-center gap-3 rounded-full px-8 py-3 text-sm font-semibold">
                   <span>{isUploading ? 'Analyzing…' : 'Select CSV File'}</span>
                   <input
                     type="file"
@@ -179,7 +187,7 @@ export default function Home() {
                   />
                 </label>
                 {error && (
-                  <p className="text-xs text-red-400 font-body">
+                  <p className="text-xs text-[#d59b86] font-body">
                     {error.message || 'Failed to analyze file. Please try again.'}
                   </p>
                 )}
@@ -192,15 +200,15 @@ export default function Home() {
                     <button
                       onClick={() => {
                         const finalData = buildStrictExportPayload(analysis)
-                        const blob = new Blob([JSON.stringify(finalData, null, 2)], { type: 'application/json' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `fraud_detection_${new Date().toISOString().split('T')[0]}.json`;
-                        a.click();
-                        URL.revokeObjectURL(url);
+                        const blob = new Blob([JSON.stringify(finalData, null, 2)], { type: 'application/json' })
+                        const url = URL.createObjectURL(blob)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `fraud_detection_${new Date().toISOString().split('T')[0]}.json`
+                        a.click()
+                        URL.revokeObjectURL(url)
                       }}
-                      className="inline-flex items-center gap-2 px-6 py-2 rounded-full text-xs font-semibold bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-colors"
+                      className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-6 py-2 text-xs font-semibold text-white transition-colors hover:bg-white/[0.08]"
                     >
                       <span className="material-symbols-outlined text-sm">download</span>
                       Download Results (JSON)
@@ -213,14 +221,14 @@ export default function Home() {
         </section>
 
         {/* ═══════ Stats ═══════ */}
-        <section ref={statsRef} className="scroll-reveal relative py-20 px-8">
+        <section ref={statsRef} className="scroll-reveal relative px-6 py-20">
           <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 relative z-10">
             {[
               { target: 2.4, suffix: 'B+', label: 'Nodes Analyzed', text: null },
               { target: 99.9, suffix: '%', label: 'Uptime', text: null },
               { target: 0, suffix: '', label: 'Real-time Detection', text: 'Real-time' },
             ].map((stat, i) => (
-              <div key={i} className="text-center p-8 rounded-2xl border border-white/5 bg-card-dark hover:border-white/10 transition-all duration-300 relative group overflow-hidden">
+              <div key={i} className="relative overflow-hidden rounded-[28px] border border-white/8 bg-card-dark/80 p-8 text-center backdrop-blur-sm transition-all duration-300 group hover:border-white/12">
                 <div className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 <p className="text-4xl font-normal text-white mb-2 font-display relative z-10">
                   {stat.text || <AnimatedCounter target={stat.target * 10} suffix={stat.suffix} />}
@@ -232,9 +240,8 @@ export default function Home() {
         </section>
 
         {/* ═══════ Modules ═══════ */}
-        <section ref={modulesRef} className="scroll-reveal relative py-32 px-8 pb-40">
-          {/* Bottom Gradient Edge */}
-          <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-accent-red via-accent-purple to-accent-blue opacity-30"></div>
+        <section ref={modulesRef} className="scroll-reveal relative px-6 py-32 pb-40">
+          <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
 
           <div className="max-w-6xl mx-auto relative z-10">
             <h2 className="text-4xl font-display text-white mb-3 tracking-tight text-center">Core Intelligence Modules</h2>
@@ -246,8 +253,7 @@ export default function Home() {
                 { icon: 'hub', title: 'Fraud Ring Detection', desc: 'Automatically identify circular transaction patterns and clusters.', to: '/fraud-rings', color: 'text-accent-purple' },
                 { icon: 'bar_chart', title: 'Advanced Analytics', desc: 'Predictive modeling using historical data to flag potential risks.', to: '/analytics', color: 'text-accent-red' },
               ].map((mod, i) => (
-                <Link key={i} to={mod.to} className="group relative p-8 rounded-3xl bg-card-dark border border-white/5 hover:border-white/10 transition-all duration-500 overflow-hidden">
-                  {/* Hover Gradient */}
+                <Link key={i} to={mod.to} className="group relative overflow-hidden rounded-[30px] border border-white/8 bg-card-dark/80 p-8 transition-all duration-500 hover:border-white/12">
                   <div className={`absolute -right-20 -top-20 w-64 h-64 bg-gradient-to-br ${i === 0 ? 'from-accent-blue/10' : i === 1 ? 'from-accent-purple/10' : 'from-accent-red/10'} to-transparent blur-[60px] opacity-0 group-hover:opacity-100 transition-opacity duration-500`}></div>
 
                   <div className="relative z-10">

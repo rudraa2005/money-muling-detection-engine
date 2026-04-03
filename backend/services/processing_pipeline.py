@@ -117,6 +117,23 @@ def warmup_ml_model() -> bool:
         return False
 
 
+def _ensure_datetime_timestamps(df):
+    """Normalize transaction timestamps for direct service/test invocations."""
+    import pandas as pd
+
+    if "timestamp" not in df.columns:
+        return df
+
+    if pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
+        return df
+
+    normalized = df.copy()
+    normalized["timestamp"] = pd.to_datetime(normalized["timestamp"], errors="coerce")
+    if normalized["timestamp"].isna().any():
+        raise ValueError("Transaction data contains invalid timestamps.")
+    return normalized
+
+
 class ProcessingService:
     """Orchestrates the complete money-muling detection pipeline."""
 
@@ -164,8 +181,7 @@ class ProcessingService:
                 def __exit__(self, *a): logger.info(f"Module '{name}' took {time.time()-self.t0:.3f}s")
             return Timer()
 
-        df = df.copy()
-        # df["timestamp"] = pd.to_datetime(df["timestamp"]) # Pre-parsed in route
+        df = _ensure_datetime_timestamps(df.copy())
         stage_timings: Dict[str, float] = {}
         _stage_t0 = time.perf_counter()
 
@@ -221,6 +237,7 @@ class ProcessingService:
         closeness_accounts = set()
         clustering_accounts = set()
         ml_scores = None
+        model_metadata: Dict[str, Any] = {}
         normalized = {}
         raw_scores = {}
         neighbor_map = {}
@@ -392,7 +409,8 @@ class ProcessingService:
                 if "high_local_clustering" not in normalized[acct]["patterns"]:
                     normalized[acct]["patterns"].append("high_local_clustering")
 
-        # 21. Combine all rings (SCC excluded — it's a supplementary pattern, not a ring)
+        # 21. Combine core structural rings. SCC output is preserved separately
+        # so it does not get collapsed behind a more specific ring label.
         all_rings = cycle_rings + smurf_rings + shell_rings + cascade_rings
 
         # Deduplicate rings by member set
@@ -400,7 +418,14 @@ class ProcessingService:
         seen_member_sets = {}
         # Deduplicate rings: exact match by member set
         # Prioritize pattern specificity over raw risk score
-        priority = {"cycle": 5, "fan_in": 4, "fan_out": 4, "shell_chain": 3, "deep_layered_cascade": 2}
+        priority = {
+            "cycle": 5,
+            "fan_in": 4,
+            "fan_out": 4,
+            "shell_chain": 3,
+            "deep_layered_cascade": 2,
+            "scc_cluster": 1,
+        }
         
         seen_member_sets: Dict[frozenset, Dict[str, Any]] = {}
         for ring in all_rings:
@@ -441,7 +466,14 @@ class ProcessingService:
         merged_sets: list[Set[str]] = []
         # Priority: cycle > smurf > shell > cascade
         # Sort by length descending then priority
-        priority = {"cycle": 4, "fan_in": 3, "fan_out": 3, "shell_chain": 2, "deep_layered_cascade": 1}
+        priority = {
+            "cycle": 4,
+            "fan_in": 3,
+            "fan_out": 3,
+            "shell_chain": 2,
+            "deep_layered_cascade": 1,
+            "scc_cluster": 0,
+        }
         final_rings.sort(
             key=lambda r: (len(r["members"]), priority.get(r.get("pattern_type", ""), 0)), 
             reverse=True
@@ -471,6 +503,8 @@ class ProcessingService:
                 p_type = "SHELL"
             elif "cycle" in raw_p:
                 p_type = "CYCLE"
+            elif "scc" in raw_p:
+                p_type = "SCC"
             elif "cascade" in raw_p:
                 p_type = "CASCADE"
             else:
@@ -494,7 +528,7 @@ class ProcessingService:
                 counters[p_type] = counters.get(p_type, 0) + 1
                 ring["ring_id"] = f"RING_{p_type}_{counters[p_type]:03d}"
         
-        all_rings = merged_rings
+        all_rings = merged_rings + scc_rings
 
         high_velocity: Set[str] = set()
         for acct, data in normalized.items():
@@ -520,6 +554,8 @@ class ProcessingService:
             except Exception as e:
                 logger.warning("ML model loading failed: %s", e)
                 model = None
+            else:
+                model_metadata = dict(getattr(model, "metadata", {}) or {}) if model else {}
 
             with log_timer("ml_feature_vector_building"):
                 feature_vectors, account_list = build_feature_vectors(
@@ -570,6 +606,7 @@ class ProcessingService:
                             
                         bootstrap_model = RiskModel()
                         bootstrap_model.train(X, y)
+                        model_metadata = dict(getattr(bootstrap_model, "metadata", {}) or {})
                         _cache_runtime_model(bootstrap_model)
                         probs = bootstrap_model.predict(X)
                         ml_scores = {acct: float(prob) for acct, prob in zip(account_list, probs)}
@@ -587,6 +624,29 @@ class ProcessingService:
 
         # 2. Apply structural bonuses for better ranking resolution
         # Hierarchy: SMURF AGG > CYCLE > SHELL
+        ml_decision_threshold = float(model_metadata.get("decision_threshold", 0.5)) if ml_scores else 0.5
+        _HARD_STRUCTURAL_MOTIFS = {
+            "cycle",
+            "smurfing_aggregator",
+            "smurfing_disperser",
+            "shell_account",
+            "deep_layered_cascade",
+            "fan_in_participant",
+            "fan_out_participant",
+        }
+        _SOFT_STRUCTURAL_MOTIFS = {
+            "high_velocity",
+            "rapid_pass_through",
+            "rapid_forwarding",
+            "low_retention_pass_through",
+            "high_throughput_ratio",
+            "balance_oscillation_pass_through",
+            "sudden_activity_spike",
+            "dormant_activation_spike",
+            "structured_fragmentation",
+        }
+        _STRUCTURAL_MOTIFS = _HARD_STRUCTURAL_MOTIFS | _SOFT_STRUCTURAL_MOTIFS
+
         for acct in normalized:
             acc_patterns = set(normalized[acct].get("patterns", []))
             bonus = 0.0
@@ -603,15 +663,28 @@ class ProcessingService:
             # 3. Structural Suppression Gate
             # Only flag accounts that have at least one concrete structural/behavioral motif.
             # EXCEPTION: Ring members are always protected.
-            _STRUCTURAL_MOTIFS = {
-                "cycle", "smurfing_aggregator", "smurfing_disperser",
-                "shell_account", "high_velocity", "rapid_pass_through",
-                "rapid_forwarding", "deep_layered_cascade", "low_retention_pass_through",
-                "high_throughput_ratio", "balance_oscillation_pass_through",
-                "sudden_activity_spike", "dormant_activation_spike",
-                "structured_fragmentation", "fan_in_participant", "fan_out_participant"
-            }
-            if acct not in all_ring_members and not (acc_patterns & _STRUCTURAL_MOTIFS):
+            if acct in all_ring_members:
+                continue
+
+            structural_hits = acc_patterns & _STRUCTURAL_MOTIFS
+            hard_hits = len(acc_patterns & _HARD_STRUCTURAL_MOTIFS)
+            soft_hits = len(acc_patterns & _SOFT_STRUCTURAL_MOTIFS)
+            ml_risk = float(normalized[acct].get("ml_risk_score", 0.0))
+            rule_risk = float(normalized[acct].get("rule_risk_score", 0.0))
+            ml_gate = ml_risk >= ml_decision_threshold
+
+            should_suppress = False
+            if not structural_hits:
+                should_suppress = True
+            elif ml_scores:
+                if hard_hits == 0 and not (ml_gate and soft_hits >= 2):
+                    should_suppress = True
+                elif hard_hits == 1 and soft_hits == 0 and not (ml_gate or rule_risk >= 0.7):
+                    should_suppress = True
+                elif hard_hits == 0 and soft_hits == 1 and not (ml_gate and rule_risk >= 0.45):
+                    should_suppress = True
+
+            if should_suppress:
                 normalized[acct]["score"] = 0.0
                 normalized[acct]["final_risk_score"] = 0.0
                 normalized[acct]["patterns"] = []
@@ -797,48 +870,60 @@ class ProcessingService:
         _mark_stage("final_score_normalization")
 
         # 27. Format output
+        output_score_threshold = float(model_metadata.get("output_score_threshold", 50.0))
+        output_score_threshold = max(0.0, min(100.0, output_score_threshold))
+        for node in nodes:
+            acct = node["id"]
+            score_data = normalized.get(acct, {"score": 0.0, "patterns": []})
+            final_score = float(round(score_data.get("score", 0.0), 2))
+            display_patterns = [
+                p for p in score_data.get("patterns", [])
+                if p not in ["multi_pattern", "nonlinear_amplifier"]
+            ]
+            node["risk_score"] = final_score
+            node["pattern_type"] = display_patterns[0] if display_patterns else "None"
+            node["flagged"] = "Yes" if final_score >= output_score_threshold else "No"
+            node["is_suspicious"] = bool(final_score >= output_score_threshold)
         res = format_output(
             scores=normalized,
             all_rings=all_rings,
             total_accounts=total_accounts,
             graph_data=graph_data,
+            min_suspicion_score=output_score_threshold,
         )
         _mark_stage("format_output")
-        # Expose backend-driven model accuracy-style metrics for Analytics.
-        # These are aggregated model confidence percentages from the last run.
+        # Expose backend-driven evaluation metrics for Analytics.
         accounts_data = list(normalized.values())
         if accounts_data:
             rule_vals = np.array([float(a.get("rule_risk_score", 0.0)) for a in accounts_data], dtype=float)
             ml_vals = np.array([float(a.get("ml_risk_score", 0.0)) for a in accounts_data], dtype=float)
-            final_vals = np.array([float(a.get("final_risk_score", 0.0)) for a in accounts_data], dtype=float)
-
+            total_avg = float(np.mean([float(a.get("final_risk_score", 0.0)) for a in accounts_data])) * 100.0
             rule_avg = float(np.mean(rule_vals)) * 100.0
             ml_avg = float(np.mean(ml_vals)) * 100.0
-            total_avg = float(np.mean([float(a.get("final_risk_score", 0.0)) for a in accounts_data])) * 100.0
-
-            # Guard against saturated score artifacts (e.g., near-constant 1.0 values).
-            # This keeps analytics cards informative without changing actual scoring logic.
-            if rule_vals.size > 20 and (rule_avg >= 99.5 or float(np.std(rule_vals)) < 0.002):
-                score_vals = np.array([float(a.get("score", 0.0)) for a in accounts_data], dtype=float)
-                score_vals = np.clip(score_vals, 0.0, 100.0)
-                rule_avg = float(np.mean(score_vals))
-
-            ml_degenerate = ml_vals.size > 20 and (ml_avg >= 99.5 or float(np.std(ml_vals)) < 0.002)
-            if ml_degenerate:
-                ml_avg = 42.7  # Safe fallback when ML output collapses to a flat distribution.
-                ml_scores = None  # Mark unavailable so UI fallback behavior remains consistent.
         else:
             rule_avg = 0.0
             ml_avg = 0.0
             total_avg = 0.0
+
+        if model_metadata.get("rule_based_accuracy") is not None:
+            rule_avg = float(model_metadata["rule_based_accuracy"])
+        if model_metadata.get("accuracy") is not None:
+            ml_avg = float(model_metadata["accuracy"])
+        if model_metadata.get("hybrid_accuracy") is not None:
+            total_avg = float(model_metadata["hybrid_accuracy"])
+        elif model_metadata.get("total_accuracy") is not None:
+            total_avg = float(model_metadata["total_accuracy"])
+
         rule_avg = max(0.0, min(100.0, rule_avg))
         ml_avg = max(0.0, min(100.0, ml_avg))
         total_avg = max(0.0, min(100.0, total_avg))
-        ml_available = bool(ml_scores)
+        ml_available = bool(ml_scores or model_metadata)
         res["summary"]["rule_based_accuracy"] = round(rule_avg, 2)
         res["summary"]["ml_model_accuracy"] = round(ml_avg, 2)
         res["summary"]["total_accuracy"] = round(total_avg, 2)
         res["summary"]["ml_model_available"] = ml_available
+        res["summary"]["output_score_threshold"] = round(output_score_threshold, 2)
+        res["summary"]["network_connectivity"] = conn_metrics
         res["summary"]["stage_timings_seconds"] = stage_timings
         # ENFORCE STRICT SCHEMA COMPLIANCE (Remove extra fields)
         res["summary"]["processing_time_seconds"] = round(time.time() - t_start, 4)
@@ -847,4 +932,3 @@ class ProcessingService:
             ", ".join(f"{k}={v:.3f}" for k, v in sorted(stage_timings.items(), key=lambda kv: kv[1], reverse=True)),
         )
         return res
-

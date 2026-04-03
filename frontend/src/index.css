@@ -1,71 +1,96 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --card: rgb(25, 25, 25);
-  --ring: rgb(26, 137, 23);
-  --input: rgb(36, 36, 36);
-  --muted: rgb(0, 0, 0);
-  --accent: rgb(26, 137, 23);
-  --border: rgb(36, 36, 36);
-  --popover: rgb(25, 25, 25);
-  --primary: rgb(26, 137, 23);
-  --secondary: rgb(0, 0, 0);
-  --background: rgb(25, 25, 25);
-  --foreground: rgb(255, 255, 255);
-  --destructive: #ef4444;
-  --card-foreground: rgb(255, 255, 255);
-  --muted-foreground: rgb(107, 107, 107);
-  --accent-foreground: rgb(255, 255, 255);
-  --popover-foreground: rgb(255, 255, 255);
-  --primary-foreground: rgb(255, 255, 255);
-  --secondary-foreground: rgb(255, 255, 255);
+  color-scheme: dark;
+  --card: rgb(21, 23, 26);
+  --ring: rgb(116, 130, 150);
+  --input: rgb(26, 29, 33);
+  --muted: rgb(12, 13, 15);
+  --accent: rgb(139, 127, 116);
+  --border: rgb(41, 44, 49);
+  --popover: rgb(17, 18, 20);
+  --primary: rgb(243, 239, 230);
+  --secondary: rgb(16, 17, 19);
+  --background: rgb(12, 13, 16);
+  --foreground: rgb(244, 240, 232);
+  --destructive: rgb(173, 115, 93);
+  --card-foreground: rgb(244, 240, 232);
+  --muted-foreground: rgb(154, 155, 147);
+  --accent-foreground: rgb(244, 240, 232);
+  --popover-foreground: rgb(244, 240, 232);
+  --primary-foreground: rgb(17, 18, 20);
+  --secondary-foreground: rgb(244, 240, 232);
 }
 
 html {
   scroll-behavior: smooth;
+  background: var(--background);
 }
 
 body {
-  font-family: 'Inter', system-ui, sans-serif;
-  background: var(--background);
+  font-family: 'Instrument Sans', system-ui, sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(116, 130, 150, 0.14), transparent 28%),
+    radial-gradient(circle at 80% 0%, rgba(139, 127, 116, 0.12), transparent 24%),
+    linear-gradient(180deg, rgb(12, 13, 16) 0%, rgb(15, 16, 19) 100%);
+  color: var(--foreground);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: rgba(116, 130, 150, 0.35);
   color: var(--foreground);
 }
 
 /* ─── Panels ─── */
 .glass-panel {
-  background: rgba(25, 25, 25, 0.92);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-bottom: 1px solid var(--border);
+  background: rgba(15, 16, 18, 0.78);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
 }
 
 .card-glass {
-  background: var(--card);
-  border: 1px solid var(--border);
-  transition: all 0.25s ease;
+  background: linear-gradient(180deg, rgba(25, 27, 31, 0.95), rgba(18, 20, 23, 0.95));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.16);
+  transition: border-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
 }
 
 .card-glass:hover {
-  border-color: rgba(26, 137, 23, 0.3);
+  border-color: rgba(116, 130, 150, 0.32);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
   transform: translateY(-2px);
 }
 
 .liquid-glass {
-  background: rgba(25, 25, 25, 0.95);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
+  background: rgba(16, 17, 19, 0.8);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.2);
 }
 
 .node-panel-glass {
-  background: rgba(20, 20, 20, 0.95);
+  background: rgba(17, 18, 20, 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* ─── Scrollbar ─── */
@@ -90,13 +115,13 @@ body {
 /* ─── Graph Canvas ─── */
 .graph-canvas {
   background-color: var(--background);
-  background-image: radial-gradient(circle at 1px 1px, rgba(50, 50, 50, 0.15) 1px, transparent 0);
+  background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.08) 1px, transparent 0);
   background-size: 40px 40px;
 }
 
 /* ─── Table ─── */
 .row-active {
-  background: rgba(26, 137, 23, 0.06);
+  background: rgba(116, 130, 150, 0.08);
   border-left: 2px solid var(--primary);
 }
 
@@ -205,35 +230,48 @@ body {
 
 /* ─── Buttons ─── */
 .btn-primary {
-  background: var(--primary);
+  background: linear-gradient(135deg, rgba(243, 239, 230, 1), rgba(223, 216, 204, 1));
   color: var(--primary-foreground);
-  transition: all 0.2s ease;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.12);
+  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
 }
 
 .btn-primary:hover {
-  filter: brightness(1.15);
+  filter: brightness(1.03);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.18);
   transform: translateY(-1px);
 }
 
 .btn-outline {
-  border: 1px solid var(--border);
-  color: var(--muted-foreground);
-  transition: all 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgb(198, 199, 194);
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 
 .btn-outline:hover {
-  border-color: var(--primary);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--foreground);
   transform: translateY(-1px);
 }
 
 /* ─── Tooltip ─── */
 .node-tooltip {
-  background: rgba(20, 20, 20, 0.96);
+  background: rgba(17, 18, 20, 0.96);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
   pointer-events: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }

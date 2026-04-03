@@ -73,7 +73,7 @@ def _identify_shell_accounts(G: nx.MultiDiGraph, df: pd.DataFrame) -> Set[str]:
         # Holding time check
         t_in = first_in.get(node_str)
         t_out = first_out.get(node_str)
-        if t_in and t_out:
+        if pd.notna(t_in) and pd.notna(t_out):
             holding_hours = (t_out - t_in).total_seconds() / 3600
             if holding_hours > SHELL_HOLDING_TIME_HOURS:
                 continue
@@ -129,6 +129,10 @@ def detect_shell_chains(
     """
     Detect shell chain patterns with tightened constraints and deduplication.
     """
+    df = df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+
     shell_accounts = _identify_shell_accounts(G, df)
     if exclude_nodes:
         shell_accounts = shell_accounts - exclude_nodes
@@ -139,10 +143,16 @@ def detect_shell_chains(
     for chain in chains:
         # Sum total amount flowing through the chain
         chain_txns = df[(df["sender_id"].isin(chain)) & (df["receiver_id"].isin(chain))]
+        if chain_txns.empty:
+            continue
         total_flow = chain_txns["amount"].sum()
         
         # Velocity check: transaction frequency
-        time_span = (chain_txns["timestamp"].max() - chain_txns["timestamp"].min()).total_seconds() / 3600
+        time_span = 0.0
+        if len(chain_txns) > 1:
+            time_span = (
+                chain_txns["timestamp"].max() - chain_txns["timestamp"].min()
+            ).total_seconds() / 3600
         velocity = len(chain_txns) / max(1, time_span)
         
         # Thresholds: Min flow 1000, Min velocity 0.5 tx/hr (if span > 0)
@@ -189,5 +199,4 @@ def detect_shell_chains(
         )
 
     return rings, total_shell_members
-
 

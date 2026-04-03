@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import pickle
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -24,8 +23,11 @@ import numpy as np
 try:
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import (
+        accuracy_score,
         confusion_matrix,
+        f1_score,
         precision_score,
+        recall_score,
         roc_auc_score,
     )
     from sklearn.preprocessing import StandardScaler
@@ -34,10 +36,17 @@ try:
 except ImportError:
     _ML_AVAILABLE = False
 
+try:
+    from xgboost import XGBClassifier
+
+    _XGBOOST_AVAILABLE = True
+except ImportError:
+    _XGBOOST_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
-# Default Logistic Regression hyperparameters
-_DEFAULT_PARAMS: Dict[str, Any] = {
+# Default model hyperparameters by estimator family.
+_DEFAULT_LOGISTIC_PARAMS: Dict[str, Any] = {
     "C": 1.0,
     "solver": "lbfgs",
     "max_iter": 2000,
@@ -45,22 +54,51 @@ _DEFAULT_PARAMS: Dict[str, Any] = {
     "class_weight": "balanced",
 }
 
+_DEFAULT_XGB_PARAMS: Dict[str, Any] = {
+    "n_estimators": 300,
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "random_state": 42,
+    "n_jobs": 4,
+}
+
 
 class RiskModel:
     """
-    Logistic Regression-based risk scoring model with built-in scaling.
+    Account-level risk scoring model with built-in feature scaling.
     """
 
-    def __init__(self, params: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        params: Optional[Dict[str, Any]] = None,
+        model_type: str = "logistic_regression",
+    ):
         """Initialize with optional hyperparameter overrides."""
         if not _ML_AVAILABLE:
             logger.warning("scikit-learn not installed. ML scoring unavailable.")
             self._model = None
             return
 
-        self._params = {**_DEFAULT_PARAMS, **(params or {})}
+        self._model_type = str(model_type).strip().lower()
+        if self._model_type in {"logistic", "logistic_regression", "logreg"}:
+            self._model_type = "logistic_regression"
+            defaults = _DEFAULT_LOGISTIC_PARAMS
+        elif self._model_type in {"xgboost", "xgb"}:
+            if not _XGBOOST_AVAILABLE:
+                raise RuntimeError("xgboost is not installed")
+            self._model_type = "xgboost"
+            defaults = _DEFAULT_XGB_PARAMS
+        else:
+            raise ValueError(f"Unsupported model_type: {model_type}")
+
+        self._params = {**defaults, **(params or {})}
         self._model: Optional[LogisticRegression] = None
         self._scaler = StandardScaler()
+        self._metadata: Dict[str, Any] = {}
 
     @property
     def is_available(self) -> bool:
@@ -69,6 +107,10 @@ class RiskModel:
     @property
     def is_trained(self) -> bool:
         return self._model is not None
+
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        return dict(self._metadata)
 
     def train(
         self,
@@ -83,10 +125,22 @@ class RiskModel:
         # Scale features
         X_scaled = self._scaler.fit_transform(X)
 
-        self._model = LogisticRegression(**self._params)
+        if self._model_type == "xgboost":
+            self._model = XGBClassifier(**self._params)
+        else:
+            self._model = LogisticRegression(**self._params)
         self._model.fit(X_scaled, y)
         
         n_pos = np.sum(y == 1)
+        self._metadata.update(
+            {
+                "model_type": self._model_type,
+                "n_features": int(X.shape[1]),
+                "n_samples": int(len(y)),
+                "positive_samples": int(n_pos),
+                "negative_samples": int(len(y) - n_pos),
+            }
+        )
         logger.info("Model trained on %d samples (%d positive)", len(y), int(n_pos))
         return self
 
@@ -112,7 +166,12 @@ class RiskModel:
         X_scaled = self._scaler.transform(X)
         return self._model.predict_proba(X_scaled)[:, 1]
 
-    def save(self, directory: str, version: int = 1) -> str:
+    def save(
+        self,
+        directory: str,
+        version: int = 1,
+        extra_metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Save model and scaler to a versioned pickle file."""
         if self._model is None:
             raise RuntimeError("No model to save — train first")
@@ -124,7 +183,8 @@ class RiskModel:
         bundle = {
             "model": self._model,
             "scaler": self._scaler,
-            "version": version
+            "version": version,
+            "model_type": self._model_type,
         }
         
         with open(path, "wb") as f:
@@ -134,9 +194,13 @@ class RiskModel:
         meta_path = os.path.join(directory, f"risk_model_v{version}_meta.json")
         meta = {
             "version": version,
+            "model_type": self._model_type,
             "params": self._params,
-            "format": "logistic_regression_bundle_v1",
+            "format": "risk_model_bundle_v2",
         }
+        meta.update(self._metadata)
+        if extra_metadata:
+            meta.update(extra_metadata)
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
 
@@ -159,6 +223,7 @@ class RiskModel:
             if isinstance(bundle, dict) and "model" in bundle:
                 self._model = bundle["model"]
                 self._scaler = bundle.get("scaler", StandardScaler())
+                self._model_type = str(bundle.get("model_type", self._model_type))
                 logger.info("Model bundle (v%s) loaded from %s", bundle.get("version"), path)
             else:
                 # Direct model pickle (legacy)
@@ -182,6 +247,16 @@ class RiskModel:
             else:
                 self._model = None
                 self._scaler = StandardScaler()
+
+        meta_path = path.replace(".pkl", "_meta.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    self._metadata = json.load(f)
+                self._model_type = str(self._metadata.get("model_type", self._model_type))
+            except Exception as e:
+                logger.warning("Failed to load model metadata: %s", e)
+                self._metadata = {}
         
         return self
 
@@ -198,7 +273,7 @@ class RiskModel:
             y: True binary labels
 
         Returns:
-            Dict with roc_auc, precision_at_top5, confusion_matrix
+            Dict with accuracy, precision, recall, f1, roc_auc, and confusion_matrix.
         """
         if self._model is None:
             raise RuntimeError("Model not trained or loaded")
@@ -206,22 +281,19 @@ class RiskModel:
         probs = self.predict(X)
         preds = (probs >= 0.5).astype(int)
 
-        # ROC-AUC
-        auc = roc_auc_score(y, probs)
+        try:
+            auc = roc_auc_score(y, probs)
+        except ValueError:
+            auc = 0.0
 
-        # Precision @ Top 5%
-        top_k = max(1, int(len(y) * 0.05))
-        top_indices = np.argsort(probs)[::-1][:top_k]
-        top_true = y[top_indices]
-        prec_at_5 = float(np.sum(top_true == 1)) if top_k > 0 else 0
-        if top_k > 0: prec_at_5 /= top_k
-
-        # Confusion matrix
         cm = confusion_matrix(y, preds)
 
         return {
+            "accuracy": round(float(accuracy_score(y, preds)), 4),
+            "precision": round(float(precision_score(y, preds, zero_division=0)), 4),
+            "recall": round(float(recall_score(y, preds, zero_division=0)), 4),
+            "f1": round(float(f1_score(y, preds, zero_division=0)), 4),
             "roc_auc": round(auc, 4),
-            "precision_at_top5_pct": round(prec_at_5, 4),
             "confusion_matrix": cm.tolist(),
         }
 

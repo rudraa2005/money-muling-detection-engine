@@ -8,16 +8,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        "primary": "#ffffff", // White text
-        "accent-blue": "#3b82f6", // Blue
-        "accent-purple": "#8b5cf6", // Purple
-        "accent-red": "#ef4444", // Red
-        "surface": "#000000",
-        "surface-highlight": "#0a0a0a",
-        "border-subtle": "#27272a",
-        "text-muted": "#a1a1aa", // Light grey
-        "background-dark": "#000000",
-        "card-dark": "#050505",
+        "primary": "#f3efe6",
+        "accent-blue": "#748296",
+        "accent-purple": "#8b7f74",
+        "accent-red": "#ad735d",
+        "surface": "#111214",
+        "surface-highlight": "#17191c",
+        "border-subtle": "#2b3036",
+        "text-muted": "#9a9b93",
+        "background-dark": "#0c0d10",
+        "card-dark": "#15171a",
       },
       fontFamily: {
         "display": ["Instrument Serif", "serif"],

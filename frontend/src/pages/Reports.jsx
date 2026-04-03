@@ -256,7 +256,7 @@ export default function Reports() {
                       {account.volume}
                     </td>
                     <td className="py-4 px-6 text-text-muted text-xs font-body">
-                      {account.date} <span className="text-white/20 px-1">•</span> {account.time}
+                      {account.date} <span className="text-white/20 px-1">|</span> {account.time}
                     </td>
                     <td className="py-4 px-6 text-right">
                       <button className="text-text-muted hover:text-white transition-colors p-2 rounded hover:bg-white/5">

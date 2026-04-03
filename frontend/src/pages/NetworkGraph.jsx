@@ -175,7 +175,7 @@ function buildGraphData(analysis, highlightRing, accountFocus) {
           role: isHighlySuspicious ? 'High Risk' : (isSuspicious ? 'Suspicious' : 'Monitored'),
           // Visual scaling based on risk
           r: isHighlySuspicious ? 12 : (isSuspicious ? 9 : 5),
-          color: isHighlySuspicious ? '#ef4444' : (isSuspicious ? '#f59e0b' : '#444'),
+          color: isHighlySuspicious ? '#b46b58' : (isSuspicious ? '#94836a' : '#5a6573'),
           ringId,
           accId: id,
           txnId: '',
@@ -274,9 +274,9 @@ function buildGraphData(analysis, highlightRing, accountFocus) {
 
   // Minimal fallback demo graph when no analysis is available yet
   const demoNodes = [
-    { globalId: 'A', label: 'ACCT-A', role: 'Monitored', r: 6, color: '#444', ringId: null, accId: 'ACCT-A', txnId: 'DEMO-1', amount: 'INR 1,200', timestamp: 'Demo' },
-    { globalId: 'B', label: 'ACCT-B', role: 'Suspicious', r: 8, color: '#e5e5e5', ringId: null, accId: 'ACCT-B', txnId: 'DEMO-2', amount: 'INR 8,400', timestamp: 'Demo' },
-    { globalId: 'C', label: 'ACCT-C', role: 'Monitored', r: 5, color: '#444', ringId: null, accId: 'ACCT-C', txnId: 'DEMO-3', amount: 'INR 600', timestamp: 'Demo' },
+    { globalId: 'A', label: 'ACCT-A', role: 'Monitored', r: 6, color: '#5a6573', ringId: null, accId: 'ACCT-A', txnId: 'DEMO-1', amount: 'INR 1,200', timestamp: 'Demo' },
+    { globalId: 'B', label: 'ACCT-B', role: 'Suspicious', r: 8, color: '#94836a', ringId: null, accId: 'ACCT-B', txnId: 'DEMO-2', amount: 'INR 8,400', timestamp: 'Demo' },
+    { globalId: 'C', label: 'ACCT-C', role: 'Monitored', r: 5, color: '#5a6573', ringId: null, accId: 'ACCT-C', txnId: 'DEMO-3', amount: 'INR 600', timestamp: 'Demo' },
   ]
   const demoEdges = [
     { from: 'A', to: 'B', suspicious: true, ringId: null },
@@ -413,8 +413,8 @@ export default function NetworkGraph() {
       ctx.setTransform(2, 0, 0, 2, 0, 0)
       ctx.clearRect(0, 0, w, h)
       const bg = ctx.createRadialGradient(w * 0.5, h * 0.45, 20, w * 0.5, h * 0.45, Math.max(w, h) * 0.75)
-      bg.addColorStop(0, 'rgb(30,30,30)')
-      bg.addColorStop(1, 'rgb(17,17,17)')
+      bg.addColorStop(0, 'rgb(23,24,28)')
+      bg.addColorStop(1, 'rgb(10,11,13)')
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, w, h)
 
@@ -423,7 +423,7 @@ export default function NetworkGraph() {
       ctx.scale(zoom, zoom)
 
       // Dotted Grid - Enhanced Visibility
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.09)'
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)'
       const gs = 50 // Grid size
       const sx = Math.floor(-pan.x / zoom / gs) * gs - gs
       const sy = Math.floor(-pan.y / zoom / gs) * gs - gs
@@ -485,11 +485,11 @@ export default function NetworkGraph() {
         // Monochrome Edge Styling
         const isSuspicious = edge.suspicious
         if (isFocusedEdge) {
-          ctx.strokeStyle = isHov ? '#bfdbfe' : 'rgba(96, 165, 250, 0.95)'
+          ctx.strokeStyle = isHov ? '#d4dde6' : 'rgba(124, 139, 156, 0.95)'
           ctx.lineWidth = (isHov ? 3.4 : 2.4) / zoom
           ctx.setLineDash([6 / zoom, 4 / zoom])
         } else if (isRing) {
-          ctx.strokeStyle = isHov ? '#93c5fd' : 'rgba(59, 130, 246, 0.85)'
+          ctx.strokeStyle = isHov ? '#bcc8d4' : 'rgba(124, 139, 156, 0.82)'
           ctx.lineWidth = (isHov ? 3 : 2.2) / zoom
           ctx.setLineDash([])
         } else if (isSuspicious || isRing) {
@@ -541,13 +541,13 @@ export default function NetworkGraph() {
         if (!isDimmed && (isHov || isHL || isSel || isSuspicious || isFocused)) {
           ctx.beginPath(); ctx.arc(n.x, n.y, drawR + (isHov ? 12 : 8) / zoom, 0, Math.PI * 2)
           if (isFocused) {
-            ctx.fillStyle = `rgba(59, 130, 246, ${isHov ? 0.5 : 0.3})`
+            ctx.fillStyle = `rgba(124, 139, 156, ${isHov ? 0.42 : 0.28})`
           } else if (n.role === 'High Risk') {
-            ctx.fillStyle = `rgba(239, 68, 68, ${isHov ? 0.4 : 0.25})`;
+            ctx.fillStyle = `rgba(180, 107, 88, ${isHov ? 0.38 : 0.24})`
           } else if (n.role === 'Suspicious') {
-            ctx.fillStyle = `rgba(245, 158, 11, ${isHov ? 0.4 : 0.25})`;
+            ctx.fillStyle = `rgba(148, 131, 106, ${isHov ? 0.34 : 0.22})`
           } else {
-            ctx.fillStyle = `rgba(255, 255, 255, ${isHov ? 0.6 : 0.2})`;
+            ctx.fillStyle = `rgba(255, 255, 255, ${isHov ? 0.5 : 0.18})`
           }
           ctx.fill()
         }
@@ -555,7 +555,7 @@ export default function NetworkGraph() {
         if (isFocused) {
           ctx.beginPath()
           ctx.arc(n.x, n.y, drawR + 7 / zoom, 0, Math.PI * 2)
-          ctx.strokeStyle = 'rgba(96, 165, 250, 0.95)'
+          ctx.strokeStyle = 'rgba(124, 139, 156, 0.92)'
           ctx.lineWidth = 2.2 / zoom
           ctx.stroke()
         }
@@ -574,11 +574,11 @@ export default function NetworkGraph() {
         if (isDimmed) {
           grad.addColorStop(0, '#333'); grad.addColorStop(1, '#111')
         } else if (isFocused) {
-          grad.addColorStop(0, '#60a5fa'); grad.addColorStop(1, '#1d4ed8')
+          grad.addColorStop(0, '#9aa9bb'); grad.addColorStop(1, '#5f7084')
         } else if (isHL || isHov || isSel) {
           grad.addColorStop(0, '#ffffff'); grad.addColorStop(1, '#aaaaaa')
         } else if (isSuspicious) {
-          grad.addColorStop(0, n.color || '#ef4444'); grad.addColorStop(1, '#7f1d1d')
+          grad.addColorStop(0, n.color || '#b46b58'); grad.addColorStop(1, '#5c463f')
         } else {
           grad.addColorStop(0, '#333333'); grad.addColorStop(1, '#111111')
         }
@@ -700,7 +700,7 @@ export default function NetworkGraph() {
         )}
 
         {focusedAccountId && (
-          <div className="absolute top-4 right-6 z-30 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/30 text-[11px] text-blue-200 font-medium">
+          <div className="absolute top-4 right-6 z-30 rounded-full border border-accent-blue/30 bg-accent-blue/12 px-4 py-2 text-[11px] font-medium text-white/90">
             Focused account: <span className="font-technical text-white">{focusedAccountId}</span>
           </div>
         )}
@@ -723,9 +723,9 @@ export default function NetworkGraph() {
                       }`,
                     )
                   }
-                  className={`w-full text-left px-2.5 py-1.5 rounded-md font-technical text-[11px] transition-colors ${
+                  className={`w-full rounded-md px-2.5 py-1.5 text-left font-technical text-[11px] transition-colors ${
                     id === focusedAccountId
-                      ? 'bg-blue-500/20 text-white border border-blue-500/40'
+                      ? 'border border-accent-blue/40 bg-accent-blue/18 text-white'
                       : 'text-neutral-300 hover:bg-white/10 hover:text-white'
                   }`}
                 >

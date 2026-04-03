@@ -202,8 +202,8 @@ export default function Analytics() {
 
               <div className="flex-1 flex items-end gap-1.5 px-1 pb-1 relative z-10">
                 {sccSeries.map((height, idx) => (
-                  <div key={idx} className="w-full bg-white/5 hover:bg-white/10 transition-colors rounded-t-sm relative overflow-hidden group-hover:shadow-[0_0_15px_rgba(255,255,255,0.2)]" style={{ height: `${height}%`, opacity: 0.5 + (height / 200) }}>
-                    <div className="absolute bottom-0 left-0 w-full bg-white/90 transition-all duration-500" style={{ height: height > 50 ? '100%' : '0%' }}></div>
+                  <div key={idx} className="relative w-full overflow-hidden rounded-t-sm bg-white/[0.04] transition-colors" style={{ height: `${height}%`, opacity: 0.5 + (height / 200) }}>
+                    <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-accent-blue/40 to-white/80 transition-all duration-500" style={{ height: height > 50 ? '100%' : '0%' }}></div>
                   </div>
                 ))}
               </div>
@@ -221,7 +221,7 @@ export default function Analytics() {
                     <span className="text-white font-bold">{Number(totalAccounts).toLocaleString()}</span>
                   </div>
                   <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-white/90 rounded-full shadow-[0_0_10px_rgba(255,255,255,0.3)]" style={{ width: `${accountsProgress}%` }}></div>
+                    <div className="h-full rounded-full bg-gradient-to-r from-accent-blue to-white/75" style={{ width: `${accountsProgress}%` }}></div>
                   </div>
                 </div>
                 <div>
@@ -230,7 +230,7 @@ export default function Analytics() {
                     <span className="text-white font-bold">{processSeconds ? `${processSeconds.toFixed(2)} s` : '0.00 s'}</span>
                   </div>
                   <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-white/20 rounded-full" style={{ width: `${processProgress}%` }}></div>
+                    <div className="h-full rounded-full bg-gradient-to-r from-accent-purple to-white/20" style={{ width: `${processProgress}%` }}></div>
                   </div>
                 </div>
               </div>
@@ -248,7 +248,7 @@ export default function Analytics() {
                 </span>
                 <div className="h-16 flex items-end justify-between gap-1.5 mt-3">
                   {depthSeries.map((height, idx) => (
-                    <div key={idx} className="w-full bg-gradient-to-t from-white/30 to-white/80 rounded-t-sm" style={{ height: `${height}%` }}></div>
+                    <div key={idx} className="w-full rounded-t-sm bg-gradient-to-t from-accent-red/35 to-white/75" style={{ height: `${height}%` }}></div>
                   ))}
                 </div>
               </div>

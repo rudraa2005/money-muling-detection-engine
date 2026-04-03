@@ -1,313 +1,357 @@
 """
-Advanced ML Training & Evaluation Script (v2).
+Train the production account-level risk model on labeled CSVs.
 
-Logic:
-    1. Load FULL labeled dataset.
-    2. Extract schema-compliant signals (Round, Night, Outlier).
-    3. Build FULL graph and run rule-based detection once.
-    4. Compute Structural Scores (PageRank, Local Clustering) globally.
-    5. Sample ACCOUNTS (preserving balance) for the training matrix.
-    6. Train Logistic Regression + Evaluate.
+Default training sources:
+  - backend/data/financial_transactions_3000_A.csv
+  - backend/data/financial_transactions_3000_B.csv
+
+The script:
+  1. Builds account-level features from the production detectors.
+  2. Trains an XGBoost classifier.
+  3. Selects a validation threshold that maximizes F1.
+  4. Saves the model bundle plus evaluation metadata.
+  5. Benchmarks the runtime pipeline in rule-only and hybrid modes.
 """
 
+from __future__ import annotations
+
+import argparse
+import logging
 import os
 import sys
-import logging
-from typing import Any, Dict, List, Set, Tuple, Optional
-import pandas as pd
+from pathlib import Path
+from typing import Dict, Iterable, Sequence
+
 import numpy as np
-import networkx as nx
+import pandas as pd
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, roc_auc_score
 
-# Add backend to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SCRIPT_DIR = Path(__file__).resolve().parent
+BACKEND_ROOT = SCRIPT_DIR.parent
+REPO_ROOT = BACKEND_ROOT.parent
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
-from core.graph.graph_builder import build_graph
-from core.structural.cycle_detection import detect_cycles
-from core.ring_detection.smurfing import detect_smurfing
-from core.structural.shell_detection import detect_shell_chains
-from core.temporal.forwarding_latency import detect_rapid_pass_through
-from core.temporal.burst_detection import detect_activity_spikes
-from core.centrality.betweenness import compute_centrality
-from core.flow.retention_analysis import detect_low_retention
-from core.flow.throughput_analysis import detect_high_throughput
-from core.flow.balance_oscillation import detect_balance_oscillation
-from core.ring_detection.diversity_analysis import detect_burst_diversity
-from core.structural.scc_analysis import detect_scc
-from core.structural.cascade_depth import detect_cascade_depth
-from core.temporal.activity_consistency import detect_irregular_activity
-from core.centrality.closeness import compute_closeness_centrality
-from core.structural.clustering_analysis import detect_high_clustering
-from core.forwarding_latency import detect_rapid_forwarding
-from core.dormancy_analysis import detect_dormant_activation
-from core.amount_structuring import detect_amount_structuring
-from core.ml.feature_vector_builder import build_feature_vectors, vectors_to_matrix
 from core.ml.ml_model import RiskModel
+from core.ml.training_data import combine_labeled_account_datasets, extract_positive_accounts
+from services.processing_pipeline import ProcessingService
+import services.processing_pipeline as runtime_pipeline
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-def extract_schema_signals(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
-    logger.info("Extracting schema-compliant behavioral signals...")
-    signals: Dict[str, Dict[str, float]] = {}
-    
-    df["is_round"] = (df["amount"] % 100 == 0).astype(float)
-    df["is_night"] = (df["timestamp"].dt.hour < 6).astype(float)
-    
-    q3 = df["amount"].quantile(0.75)
-    iqr = q3 - df["amount"].quantile(0.25)
-    outlier_thresh = q3 + 1.5 * iqr
+DEFAULT_CSVS = [
+    BACKEND_ROOT / "data" / "financial_transactions_3000_A.csv",
+    BACKEND_ROOT / "data" / "financial_transactions_3000_B.csv",
+]
+DEFAULT_LABEL_COLUMN = "is_fraud"
+DEFAULT_MODEL_DIR = BACKEND_ROOT / "core" / "ml" / "models"
 
-    # Vectorized account-level aggregation
-    senders = df.groupby("sender_id").agg({"is_round": "max", "is_night": "max", "amount": "max"})
-    receivers = df.groupby("receiver_id").agg({"is_round": "max", "is_night": "max", "amount": "max"})
-    
-    all_ids = set(senders.index) | set(receivers.index)
-    for acct in all_ids:
-        s_data = senders.loc[acct] if acct in senders.index else None
-        r_data = receivers.loc[acct] if acct in receivers.index else None
-        
-        signals[acct] = {
-            "is_round_amount": max(s_data["is_round"] if s_data is not None else 0, r_data["is_round"] if r_data is not None else 0),
-            "is_night_transaction": max(s_data["is_night"] if s_data is not None else 0, r_data["is_night"] if r_data is not None else 0),
-            "is_high_amount_outlier": 1.0 if max(s_data["amount"] if s_data is not None else 0, r_data["amount"] if r_data is not None else 0) > outlier_thresh else 0.0
+
+def _metric_dict(y_true: np.ndarray, probs: np.ndarray, threshold: float) -> Dict[str, float]:
+    preds = (probs >= threshold).astype(int)
+    try:
+        auc = float(roc_auc_score(y_true, probs))
+    except ValueError:
+        auc = 0.0
+
+    return {
+        "accuracy": float(accuracy_score(y_true, preds)),
+        "precision": float(precision_score(y_true, preds, zero_division=0)),
+        "recall": float(recall_score(y_true, preds, zero_division=0)),
+        "f1": float(f1_score(y_true, preds, zero_division=0)),
+        "roc_auc": auc,
+    }
+
+
+def _select_threshold(y_true: np.ndarray, probs: np.ndarray) -> tuple[float, Dict[str, float]]:
+    best_threshold = 0.5
+    best_metrics = _metric_dict(y_true, probs, best_threshold)
+    best_key = (best_metrics["f1"], best_metrics["precision"], best_metrics["accuracy"])
+
+    for threshold in np.linspace(0.2, 0.8, 61):
+        metrics = _metric_dict(y_true, probs, float(threshold))
+        key = (metrics["f1"], metrics["precision"], metrics["accuracy"])
+        if key > best_key:
+            best_threshold = float(threshold)
+            best_metrics = metrics
+            best_key = key
+
+    return best_threshold, best_metrics
+
+
+def _evaluate_runtime_pipeline(
+    runtime_results: Sequence[tuple[list[dict], set[str], set[str]]],
+    score_threshold: float = 0.0,
+) -> Dict[str, float]:
+    tp = fp = fn = tn = 0
+
+    for suspicious_accounts, all_accounts, positives in runtime_results:
+        predicted = {
+            str(item["account_id"])
+            for item in suspicious_accounts
+            if item.get("account_id") is not None
+            and float(item.get("suspicion_score", 0.0)) >= score_threshold
         }
-    return signals
 
-def main():
-    dataset_path = sys.argv[1] if len(sys.argv) > 1 else "data/synthetic_transactions_60neg_40pos.csv"
-    test_path = "data/financial_transactions_10000.csv"
-    
-    if not os.path.exists(dataset_path):
-        logger.warning("Primary dataset not found. Falling back to SELF-TRAINING mode using: %s", test_path)
-        dataset_path = test_path
-        is_self_training = True
-    else:
-        is_self_training = False
+        tp += len(predicted & positives)
+        fp += len(predicted - positives)
+        fn += len(positives - predicted)
+        tn += len(all_accounts - (predicted | positives))
 
-    logger.info("Loading dataset: %s", dataset_path)
-    df_raw = pd.read_csv(dataset_path)
-    
-    # REDUCE DATA SIZE for speed while remaining effective (as requested)
-    if len(df_raw) > 15000:
-        logger.info("Sampling 15,000 transactions for training...")
-        df_raw = df_raw.sample(n=15000, random_state=42).sort_index()
+    total = tp + fp + fn + tn
+    precision = (tp / (tp + fp)) if (tp + fp) else 0.0
+    recall = (tp / (tp + fn)) if (tp + fn) else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    accuracy = ((tp + tn) / total) if total else 0.0
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
 
-    # Generic Column Mapping
-    if "Date" in df_raw.columns and "Time" in df_raw.columns:
-        # Synthetic schema
-        df = pd.DataFrame({
-            "timestamp": pd.to_datetime(df_raw["Date"] + " " + df_raw["Time"]),
-            "sender_id": df_raw["Sender_account"].astype(str),
-            "receiver_id": df_raw["Receiver_account"].astype(str),
-            "amount": df_raw["Amount"],
-            "is_laundering": df_raw.get("Is_laundering", 0),
-            "transaction_id": [f"TX_{i:08d}" for i in range(len(df_raw))]
-        })
-    else:
-        # Standard schema
-        df = df_raw.copy()
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        if "is_laundering" not in df.columns:
-            df["is_laundering"] = 0 # Will be pseudo-labeled
-    
-    schema_signals = extract_schema_signals(df)
-    
-    logger.info("Building global graph for structural analysis...")
-    G = build_graph(df)
-    
-    logger.info("Computing Rule-Based Detection for (Pseudo) Labeling...")
-    # Patterns
-    cycles = detect_cycles(G, df)
-    cycle_accts = {m for r in cycles for m in r["members"]}
-    _, aggregators, dispersers, _ = detect_smurfing(df)
-    _, shell_accts = detect_shell_chains(G, df)
-    rapid_pt, _ = detect_rapid_pass_through(df)
-    spike_accts, _ = detect_activity_spikes(df)
-    centrality_accts, _ = compute_centrality(G)
-    low_ret_accts = detect_low_retention(df)
-    high_thru_accts = detect_high_throughput(df)
-    osc_accts = detect_balance_oscillation(df)
-    diversity_accts, _ = detect_burst_diversity(df)
-    scc_accts, _ = detect_scc(G)
-    cascade_accts = detect_cascade_depth(G, df)
-    irreg_accts = detect_irregular_activity(df)
-    forwarding_accts, _ = detect_rapid_forwarding(df)
-    dormant_accts = detect_dormant_activation(df)
-    structuring_accts = detect_amount_structuring(df)
-    
-    susp_subset = cycle_accts | aggregators | dispersers | shell_accts
-    closeness_accts, _ = compute_closeness_centrality(G, susp_subset)
-    clustering_accts, _ = detect_high_clustering(G, susp_subset)
 
-    logger.info("Computing Global Structural Scores (PageRank, Clustering)...")
-    pr = nx.pagerank(G.to_directed())
-    lc = nx.clustering(nx.Graph(G)) # Local clustering coefficient
-    structural_scores = {acct: {"pagerank": pr.get(acct, 0.0), "local_clustering": lc.get(acct, 0.0)} for acct in G.nodes()}
+def _collect_runtime_results(
+    csv_paths: Sequence[Path],
+    label_column: str,
+    use_ml: bool,
+) -> list[tuple[list[dict], set[str], set[str]]]:
+    old_enabled = runtime_pipeline.ML_ENABLED
+    old_cached_model = runtime_pipeline._CACHED_MODEL
+    old_cached_path = runtime_pipeline._CACHED_MODEL_PATH
 
-    if is_self_training:
-        logger.info("Generating Pseudo-Labels using Rule Engine...")
-        from core.risk.base_scoring import compute_scores
-        rule_results = compute_scores(
-            df=df, cycle_accounts=cycle_accts, aggregators=aggregators,
-            dispersers=dispersers, shell_accounts=shell_accts,
-            merchant_accounts=set(), payroll_accounts=set(),
-            rapid_pass_through=rapid_pt, activity_spike=spike_accts,
-            high_centrality=centrality_accts, low_retention=low_ret_accts,
-            high_throughput=high_thru_accts, balance_oscillation=osc_accts,
-            burst_diversity=diversity_accts, scc_members=scc_accts,
-            cascade_depth=cascade_accts, irregular_activity=irreg_accts,
-            high_closeness=closeness_accts, high_clustering=clustering_accts,
-            rapid_forwarding=forwarding_accts, dormant_activation=dormant_accts,
-            structured_fragmentation=structuring_accts
-        )
-        # Lower threshold for broader behavioral learning (score > 20)
-        suspicious_ids = {acct for acct, res in rule_results.items() if res["score"] > 20.0}
-        logger.info("Self-labeling: identified %d suspicious accounts", len(suspicious_ids))
-    else:
-        # Account Ground Truth (Labeled data)
-        suspicious_ids = set(df[df["is_laundering"] == 1]["sender_id"].unique()) | \
-                         set(df[df["is_laundering"] == 1]["receiver_id"].unique())
+    runtime_pipeline.ML_ENABLED = use_ml
+    runtime_pipeline._CACHED_MODEL = None
+    runtime_pipeline._CACHED_MODEL_PATH = None
 
-    all_accounts = list(G.nodes())
-    y_map = {acct: (1 if acct in suspicious_ids else 0) for acct in all_accounts}
+    collected: list[tuple[list[dict], set[str], set[str]]] = []
+    service = ProcessingService()
+    try:
+        for csv_path in csv_paths:
+            df = pd.read_csv(csv_path)
+            positives = extract_positive_accounts(df, label_column=label_column)
+            all_accounts = {
+                str(acct)
+                for acct in pd.concat(
+                    [df["sender_id"].astype(str), df["receiver_id"].astype(str)],
+                    ignore_index=True,
+                ).unique()
+            }
+            result = service.process(df)
+            suspicious_accounts = list(result.get("suspicious_accounts", []))
+            collected.append((suspicious_accounts, all_accounts, positives))
+    finally:
+        runtime_pipeline.ML_ENABLED = old_enabled
+        runtime_pipeline._CACHED_MODEL = old_cached_model
+        runtime_pipeline._CACHED_MODEL_PATH = old_cached_path
 
-    # Sampling ACCOUNTS to balance training
-    pos_accts = [a for a in all_accounts if y_map[a] == 1]
-    neg_accts = [a for a in all_accounts if y_map[a] == 0]
-    
-    # Ensure we have at least SOME training data
-    if not pos_accts:
-        logger.warning("No suspicious accounts found! Training on most active negative accounts as pseudo-positives.")
-        # Fallback: take top 2% of accounts by transaction count
-        active_counts = df["sender_id"].value_counts().add(df["receiver_id"].value_counts(), fill_value=0)
-        top_active = active_counts.nlargest(int(len(all_accounts) * 0.05)).index.tolist()
-        pos_accts = [a for a in top_active if a in all_accounts]
-        for a in pos_accts: y_map[a] = 1
+    return collected
 
-    sampled_neg = np.random.choice(neg_accts, min(len(neg_accts), max(100, len(pos_accts) * 3)), replace=False)
-    training_accts = set(pos_accts) | set(sampled_neg)
-    
-    logger.info("Constructing feature vectors for %d sampled accounts...", len(training_accts))
-    vectors, account_list = build_feature_vectors(
-        all_accounts=training_accts,
-        cycle_accounts=cycle_accts,
-        aggregators=aggregators,
-        dispersers=dispersers,
-        shell_accounts=shell_accts,
-        high_velocity=set(),
-        rapid_pass_through=rapid_pt,
-        activity_spike=spike_accts,
-        high_centrality=centrality_accts,
-        low_retention=low_ret_accts,
-        high_throughput=high_thru_accts,
-        balance_oscillation=osc_accts,
-        burst_diversity=diversity_accts,
-        scc_members=scc_accts,
-        cascade_depth=cascade_accts,
-        irregular_activity=irreg_accts,
-        high_closeness=closeness_accts,
-        high_clustering=clustering_accts,
-        rapid_forwarding=forwarding_accts,
-        dormant_activation=dormant_accts,
-        structured_fragmentation=structuring_accts,
-        G=G,
-        df=df,
-        schema_signals=schema_signals,
-        structural_scores=structural_scores
+
+def _select_runtime_output_threshold(
+    runtime_results: Sequence[tuple[list[dict], set[str], set[str]]],
+) -> tuple[float, Dict[str, float]]:
+    best_threshold = 50.0
+    best_metrics = _evaluate_runtime_pipeline(runtime_results, score_threshold=best_threshold)
+    best_key = (best_metrics["f1"], best_metrics["accuracy"], best_metrics["precision"])
+
+    for threshold in range(50, 101):
+        metrics = _evaluate_runtime_pipeline(runtime_results, score_threshold=float(threshold))
+        key = (metrics["f1"], metrics["accuracy"], metrics["precision"])
+        if key > best_key:
+            best_threshold = float(threshold)
+            best_metrics = metrics
+            best_key = key
+
+    return best_threshold, best_metrics
+
+
+def _resolve_csvs(paths: Iterable[str]) -> list[Path]:
+    resolved: list[Path] = []
+    for value in paths:
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = (REPO_ROOT / value).resolve()
+        resolved.append(candidate)
+    return resolved
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Train the production account-level risk model.")
+    parser.add_argument(
+        "--csv",
+        action="append",
+        default=[str(path.relative_to(REPO_ROOT)) for path in DEFAULT_CSVS],
+        help="Labeled CSV path. Repeat for multiple files.",
     )
-    
-    X = vectors_to_matrix(vectors, account_list)
-    y = np.array([y_map[acct] for acct in account_list])
-    
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    
-    logger.info("Training Model...")
-    model = RiskModel(params={"C": 0.1}) # stronger regularization for better generalization
+    parser.add_argument(
+        "--label-column",
+        default=DEFAULT_LABEL_COLUMN,
+        help="Transaction label column name. Default: is_fraud",
+    )
+    parser.add_argument(
+        "--version",
+        type=int,
+        default=1,
+        help="Model version number for the saved bundle. Default: 1",
+    )
+    args = parser.parse_args()
+
+    csv_paths = _resolve_csvs(args.csv)
+    for path in csv_paths:
+        if not path.exists():
+            raise FileNotFoundError(f"Training CSV not found: {path}")
+
+    logger.info("Building labeled account dataset from %d CSV files...", len(csv_paths))
+    X, y, account_rows = combine_labeled_account_datasets(
+        [str(path) for path in csv_paths],
+        label_column=args.label_column,
+    )
+    logger.info(
+        "Training matrix ready: samples=%d features=%d positives=%d negatives=%d",
+        X.shape[0],
+        X.shape[1],
+        int(y.sum()),
+        int(len(y) - y.sum()),
+    )
+
+    X_train_full, X_test, y_train_full, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42,
+        stratify=y,
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train_full,
+        y_train_full,
+        test_size=0.2,
+        random_state=42,
+        stratify=y_train_full,
+    )
+
+    scale_pos_weight = float((len(y_train) - y_train.sum()) / max(y_train.sum(), 1))
+    model = RiskModel(
+        model_type="xgboost",
+        params={
+            "n_estimators": 320,
+            "max_depth": 5,
+            "learning_rate": 0.05,
+            "subsample": 0.85,
+            "colsample_bytree": 0.85,
+            "min_child_weight": 2,
+            "reg_alpha": 0.05,
+            "reg_lambda": 2.0,
+            "tree_method": "hist",
+            "scale_pos_weight": scale_pos_weight,
+        },
+    )
     model.train(X_train, y_train)
-    
-    # Evaluate
-    probs = model.predict(X_test)
-    preds = (probs >= 0.5).astype(int)
-    
-    print("\n" + "="*40)
-    print("      85% ACCURACY TARGET - EVALUATION")
-    print("="*40)
-    print(classification_report(y_test, preds, target_names=["Clean", "Suspicious"]))
-    print(f"ROC-AUC Score: {roc_auc_score(y_test, probs):.4f}")
-    
-    from core.ml.feature_vector_builder import FEATURE_NAMES
-    importance = model.get_feature_importance()
-    if importance is not None:
-        print("\nSignificant Features:")
-        sorted_idx = np.argsort(np.abs(importance))[::-1]
-        for idx in sorted_idx[:15]:
-            print(f"  {FEATURE_NAMES[idx]:30s} : {importance[idx]:.4f}")
-    print("="*40 + "\n")
 
-    # ---------------------------------------------------------
-    # FINAL EVALUATION ON financial_transactions_10000.csv
-    # ---------------------------------------------------------
-    if os.path.exists(test_path):
-        logger.info("Double-Evaluating on: %s", test_path)
-        df_test = pd.read_csv(test_path)
-        df_test["timestamp"] = pd.to_datetime(df_test["timestamp"])
-        
-        # 1. ML Scoring
-        test_G = build_graph(df_test)
-        test_schema_signals = extract_schema_signals(df_test)
-        # (Simplified structural scores for test evaluation)
-        test_pr = nx.pagerank(test_G.to_directed())
-        test_lc = nx.clustering(nx.Graph(test_G))
-        test_structural = {a: {"pagerank": test_pr.get(a,0), "local_clustering": test_lc.get(a,0)} for a in test_G.nodes()}
-        
-        # Rule detection on test set
-        t_cycles = detect_cycles(test_G, df_test)
-        t_cycle_accts = {m for r in t_cycles for m in r["members"]}
-        _, t_aggregators, t_dispersers, _ = detect_smurfing(df_test)
-        
-        test_vectors, test_acct_list = build_feature_vectors(
-            all_accounts=set(test_G.nodes()),
-            cycle_accounts=t_cycle_accts, aggregators=t_aggregators, dispersers=t_dispersers,
-            shell_accounts=set(), high_velocity=set(), rapid_pass_through=set(),
-            activity_spike=set(), high_centrality=set(), low_retention=set(),
-            high_throughput=set(), balance_oscillation=set(), burst_diversity=set(),
-            scc_members=set(), cascade_depth=set(), irregular_activity=set(),
-            high_closeness=set(), high_clustering=set(), rapid_forwarding=set(),
-            dormant_activation=set(), structured_fragmentation=set(),
-            G=test_G, df=df_test, schema_signals=test_schema_signals,
-            structural_scores=test_structural
-        )
-        
-        X_final_test = vectors_to_matrix(test_vectors, test_acct_list)
-        ml_scores = model.predict(X_final_test)
-        
-        # 2. Rule-Based Scoring Engine (Proxy)
-        # Using a weighted count of detected patterns on this file
-        rule_scores = []
-        for acct in test_acct_list:
-            score = 0
-            if acct in t_cycle_accts: score += 60
-            if acct in t_aggregators: score += 50
-            if acct in t_dispersers: score += 50
-            rule_scores.append(min(100, score))
-        
-        print("\n" + "="*50)
-        print("          FINAL EVALUATION RESULTS")
-        print("="*50)
-        print(f"File: {test_path}")
-        print(f"ML Model Average Risk: {np.mean(ml_scores):.4f}")
-        print(f"Rule Engine Max Score: {np.max(rule_scores) if rule_scores else 0}")
-        print(f"Total Accounts Analyzed: {len(test_acct_list)}")
-        print("-" * 50)
-        print("Top 5 Riskiest Accounts (ML Score):")
-        top_idx = np.argsort(ml_scores)[::-1][:5]
-        for i in top_idx:
-            print(f"  {test_acct_list[i]:15} -> ML: {ml_scores[i]:.2f} | Rule: {rule_scores[i]}")
-        print("="*50 + "\n")
+    val_probs = model.predict(X_val)
+    decision_threshold, val_metrics = _select_threshold(y_val, val_probs)
+    test_probs = model.predict(X_test)
+    test_metrics = _metric_dict(y_test, test_probs, decision_threshold)
 
-    model.save("core/ml/models", version=1)
+    logger.info(
+        "Validation threshold selected at %.2f | val_f1=%.4f val_precision=%.4f",
+        decision_threshold,
+        val_metrics["f1"],
+        val_metrics["precision"],
+    )
+    logger.info(
+        "Held-out test metrics | acc=%.4f prec=%.4f rec=%.4f f1=%.4f auc=%.4f",
+        test_metrics["accuracy"],
+        test_metrics["precision"],
+        test_metrics["recall"],
+        test_metrics["f1"],
+        test_metrics["roc_auc"],
+    )
+
+    model_dir = DEFAULT_MODEL_DIR
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata: Dict[str, object] = {
+        "accuracy": round(test_metrics["accuracy"] * 100, 2),
+        "precision": round(test_metrics["precision"] * 100, 2),
+        "recall": round(test_metrics["recall"] * 100, 2),
+        "f1": round(test_metrics["f1"] * 100, 2),
+        "roc_auc": round(test_metrics["roc_auc"] * 100, 2),
+        "decision_threshold": round(float(decision_threshold), 4),
+        "training_datasets": [str(path.relative_to(REPO_ROOT)) for path in csv_paths],
+        "label_column": args.label_column,
+        "validation_accuracy": round(val_metrics["accuracy"] * 100, 2),
+        "validation_precision": round(val_metrics["precision"] * 100, 2),
+        "validation_recall": round(val_metrics["recall"] * 100, 2),
+        "validation_f1": round(val_metrics["f1"] * 100, 2),
+        "accounts_seen": int(len(account_rows)),
+    }
+
+    output_path = model.save(str(model_dir), version=args.version, extra_metadata=metadata)
+
+    logger.info("Evaluating runtime pipeline with the new model bundle...")
+    hybrid_results = _collect_runtime_results(csv_paths, args.label_column, use_ml=True)
+    output_score_threshold, hybrid_metrics = _select_runtime_output_threshold(hybrid_results)
+    logger.info(
+        "Runtime output threshold selected at %.0f | acc=%.4f prec=%.4f rec=%.4f f1=%.4f",
+        output_score_threshold,
+        hybrid_metrics["accuracy"],
+        hybrid_metrics["precision"],
+        hybrid_metrics["recall"],
+        hybrid_metrics["f1"],
+    )
+
+    rule_results = _collect_runtime_results(csv_paths, args.label_column, use_ml=False)
+    rule_output_threshold, rule_metrics = _select_runtime_output_threshold(rule_results)
+
+    metadata.update(
+        {
+            "output_score_threshold": round(output_score_threshold, 2),
+            "rule_output_score_threshold": round(rule_output_threshold, 2),
+            "hybrid_accuracy": round(hybrid_metrics["accuracy"] * 100, 2),
+            "hybrid_precision": round(hybrid_metrics["precision"] * 100, 2),
+            "hybrid_recall": round(hybrid_metrics["recall"] * 100, 2),
+            "hybrid_f1": round(hybrid_metrics["f1"] * 100, 2),
+            "rule_based_accuracy": round(rule_metrics["accuracy"] * 100, 2),
+            "rule_based_precision": round(rule_metrics["precision"] * 100, 2),
+            "rule_based_recall": round(rule_metrics["recall"] * 100, 2),
+            "rule_based_f1": round(rule_metrics["f1"] * 100, 2),
+            "total_accuracy": round(hybrid_metrics["accuracy"] * 100, 2),
+        }
+    )
+    model.save(str(model_dir), version=args.version, extra_metadata=metadata)
+
+    print("\n" + "=" * 72)
+    print("Saved model bundle:", output_path)
+    print(f"Decision threshold: {decision_threshold:.2f}")
+    print(f"Output score threshold: {output_score_threshold:.0f}")
+    print(
+        "Held-out classifier metrics:",
+        f"acc={test_metrics['accuracy']:.4f}",
+        f"prec={test_metrics['precision']:.4f}",
+        f"rec={test_metrics['recall']:.4f}",
+        f"f1={test_metrics['f1']:.4f}",
+        f"auc={test_metrics['roc_auc']:.4f}",
+    )
+    print(
+        "Runtime rule-only metrics:",
+        f"acc={rule_metrics['accuracy']:.4f}",
+        f"prec={rule_metrics['precision']:.4f}",
+        f"rec={rule_metrics['recall']:.4f}",
+        f"f1={rule_metrics['f1']:.4f}",
+    )
+    print(
+        "Runtime hybrid metrics:",
+        f"acc={hybrid_metrics['accuracy']:.4f}",
+        f"prec={hybrid_metrics['precision']:.4f}",
+        f"rec={hybrid_metrics['recall']:.4f}",
+        f"f1={hybrid_metrics['f1']:.4f}",
+    )
+    print("=" * 72)
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

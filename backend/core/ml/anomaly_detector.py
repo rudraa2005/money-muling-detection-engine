@@ -23,20 +23,34 @@ def detect_anomalies(df: pd.DataFrame) -> pd.Series:
     if df.empty:
         return pd.Series(dtype=float)
 
+    df_local = df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df_local["timestamp"]):
+        df_local["timestamp"] = pd.to_datetime(df_local["timestamp"], errors="coerce")
+
+    if df_local["timestamp"].isna().any():
+        logger.error("Anomaly detection skipped due to invalid timestamps.")
+        return pd.Series(0.0, index=df.index)
+
     # 1. Feature Engineering for Anomaly Detection
     # Focus on raw transactional behavior
-    features = pd.DataFrame()
-    features['amount'] = df['amount']
+    features = pd.DataFrame(index=df_local.index)
+    features['amount'] = df_local['amount']
     
     # Hour of day (0-23)
-    features['hour'] = pd.to_datetime(df['timestamp']).dt.hour
+    features['hour'] = df_local['timestamp'].dt.hour
     
     # Simple day of week (0-6)
-    features['day_of_week'] = pd.to_datetime(df['timestamp']).dt.dayofweek
+    features['day_of_week'] = df_local['timestamp'].dt.dayofweek
     
     # Time since last txn for sender (requires sorting)
-    df_sorted = df.sort_values(['sender_id', 'timestamp'])
-    features['time_diff'] = df_sorted.groupby('sender_id')['timestamp'].diff().dt.total_seconds().fillna(0)
+    df_sorted = df_local.sort_values(['sender_id', 'timestamp'])
+    time_diff = (
+        df_sorted.groupby('sender_id')['timestamp']
+        .diff()
+        .dt.total_seconds()
+        .fillna(0)
+    )
+    features['time_diff'] = time_diff.reindex(df_local.index, fill_value=0)
     
     # 2. Model Training
     # contamination='auto' lets the model decide the outlier fraction
@@ -61,7 +75,7 @@ def detect_anomalies(df: pd.DataFrame) -> pd.Series:
         else:
             normalized = np.zeros_like(raw_scores)
             
-        return pd.Series(normalized, index=df.index)
+        return pd.Series(normalized, index=df_local.index)
         
     except Exception as e:
         logger.error(f"Anomaly detection failed: {e}")
